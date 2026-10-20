@@ -1169,15 +1169,15 @@ async fn history_outcome(
     summary.vibe = app.dj.vibe.clone();
   }
 
-  if summary.is_sparse() {
-    return ToolOutcome::ok_localized(|strings| {
-      strings
-        .status
-        .tools
-        .history_sparse(summary.total_plays, tool_period_label(period, strings))
-    });
-  }
+  history_result(summary, period)
+}
 
+/// Sparse history keeps the "ask the user" advice but still reports the vibe and
+/// the current track, with the same payload keys as the full summary.
+fn history_result(
+  summary: brief::TasteBrief,
+  period: crate::infra::history::RecapPeriod,
+) -> ToolOutcome {
   let structured = json!({
     "period": summary.period_label,
     "total_plays": summary.total_plays,
@@ -1188,6 +1188,22 @@ async fn history_outcome(
     "now_playing": summary.now_playing,
     "vibe": summary.vibe,
   });
+  if summary.is_sparse() {
+    return ToolOutcome::data_localized(
+      |strings| {
+        let s = &strings.status.tools;
+        let mut out = s.history_sparse(summary.total_plays, tool_period_label(period, strings));
+        if let Some(now) = &summary.now_playing {
+          out.push_str(&s.brief_now(now));
+        }
+        if let Some(vibe) = &summary.vibe {
+          out.push_str(&s.brief_vibe(vibe));
+        }
+        out
+      },
+      structured,
+    );
+  }
   ToolOutcome::data_localized(
     |strings| summary.display_block(strings, tool_period_label(period, strings)),
     structured,
@@ -1569,6 +1585,24 @@ mod tests {
       .map(|i| json!({"uri": format!("spotify:track:{i}")}))
       .collect();
     assert!(parse_call("queue_tracks", &json!({"tracks": too_many})).is_err());
+  }
+
+  #[test]
+  fn sparse_history_still_reports_the_vibe_and_current_track() {
+    let summary = brief::TasteBrief {
+      period_label: "week",
+      total_plays: 2,
+      now_playing: Some("Song — Artist".into()),
+      vibe: Some("mellow piano".into()),
+      ..Default::default()
+    };
+    let outcome = history_result(summary, crate::infra::history::RecapPeriod::SevenDays);
+    assert!(outcome.text.contains("mellow piano"));
+    assert!(outcome.text.contains("Song — Artist"));
+    let structured = outcome.structured.expect("sparse path carries a payload");
+    assert_eq!(structured["vibe"], "mellow piano");
+    assert_eq!(structured["now_playing"], "Song — Artist");
+    assert_eq!(structured["total_plays"], 2);
   }
 
   #[tokio::test]
