@@ -234,7 +234,12 @@ impl MediaSource for LocalSource {
 
     // Sort alphabetically for stable ordering across runs. The relative names
     // carry `/`, so a parent folder's playlists stay grouped together.
-    playlists.sort_by(|a, b| a.name.cmp(&b.name));
+    playlists.sort_by(|a, b| {
+      a.name
+        .to_lowercase()
+        .cmp(&b.name.to_lowercase())
+        .then_with(|| a.name.cmp(&b.name))
+    });
 
     // Prepend a synthetic "(root)" entry when the root directory itself
     // contains at least one audio file, so loose files are browsable.
@@ -298,7 +303,8 @@ impl MediaSource for LocalSource {
       let key = |n: u32| if n == 0 { u32::MAX } else { n };
       key(a.track_number)
         .cmp(&key(b.track_number))
-        .then(a.name.cmp(&b.name))
+        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        .then_with(|| a.name.cmp(&b.name))
     });
     Ok(tracks)
   }
@@ -920,6 +926,31 @@ mod tests {
       assert_eq!(pl.owner, "local");
       assert!(pl.uri.starts_with("file://"), "uri should be a file:// URI");
     }
+  }
+
+  #[test]
+  fn playlists_and_tracks_sort_case_insensitively() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for d in ["Zappa", "abba", "Beatles"] {
+      std::fs::create_dir(root.join(d)).unwrap();
+      write_wav(&root.join(d).join("x.wav"), 44100, 100);
+    }
+    write_wav(&root.join("abba/another.wav"), 44100, 100);
+    write_wav(&root.join("abba/Track.wav"), 44100, 100);
+
+    let src = LocalSource::new(root);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let playlists = rt.block_on(src.playlists()).unwrap();
+    let names: Vec<&str> = playlists.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, vec!["abba", "Beatles", "Zappa"]);
+
+    let abba = playlists.iter().find(|p| p.name == "abba").unwrap();
+    let tracks = rt.block_on(src.tracks(&abba.uri)).unwrap();
+    let names: Vec<String> = tracks.iter().map(|t| t.name.to_lowercase()).collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted);
   }
 
   // ---------------------------------------------------------------------------
