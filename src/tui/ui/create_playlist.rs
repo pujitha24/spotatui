@@ -16,6 +16,16 @@ fn centered_rect(bounds: Rect, width_pct: u16, height_pct: u16) -> Rect {
   Rect::new(x, y, width, height)
 }
 
+/// Horizontal scroll that keeps the cursor inside a single-line input whose
+/// borders leave `inner_width` columns, as the main search box does.
+fn input_scroll(cursor: u16, inner_width: u16) -> u16 {
+  if inner_width > 0 && cursor >= inner_width {
+    cursor - inner_width + 1
+  } else {
+    0
+  }
+}
+
 pub fn draw_create_playlist_form(f: &mut Frame<'_>, app: &App) {
   let area = centered_rect(f.area(), 80, 80);
   f.render_widget(Clear, area);
@@ -55,14 +65,21 @@ fn draw_name_stage(f: &mut Frame<'_>, app: &App, area: Rect) {
   f.render_widget(label, inner[0]);
 
   let name_text: String = app.view.create_playlist_name.iter().collect();
-  let input = Paragraph::new(name_text).style(theme.base_style()).block(
-    Block::default()
-      .borders(Borders::ALL)
-      .border_style(Style::default().fg(theme.active.into())),
+  let name_scroll = input_scroll(
+    app.view.create_playlist_name_cursor,
+    inner[1].width.saturating_sub(2),
   );
+  let input = Paragraph::new(name_text)
+    .style(theme.base_style())
+    .scroll((0, name_scroll))
+    .block(
+      Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.active.into())),
+    );
   f.render_widget(input, inner[1]);
   f.set_cursor_position((
-    inner[1].x + 1 + app.view.create_playlist_name_cursor,
+    inner[1].x + 1 + app.view.create_playlist_name_cursor - name_scroll,
     inner[1].y + 1,
   ));
 
@@ -101,19 +118,26 @@ fn draw_add_tracks_stage(f: &mut Frame<'_>, app: &App, area: Rect) {
   } else {
     Style::default().fg(theme.inactive.into())
   };
-  let search_input = Paragraph::new(search_text).style(theme.base_style()).block(
-    Block::default()
-      .title(Span::styled(
-        app.strings().popups.create_search_title,
-        Style::default().fg(theme.header.into()),
-      ))
-      .borders(Borders::ALL)
-      .border_style(search_border_style),
+  let search_scroll = input_scroll(
+    app.view.create_playlist_search_cursor,
+    inner[0].width.saturating_sub(2),
   );
+  let search_input = Paragraph::new(search_text)
+    .style(theme.base_style())
+    .scroll((0, search_scroll))
+    .block(
+      Block::default()
+        .title(Span::styled(
+          app.strings().popups.create_search_title,
+          Style::default().fg(theme.header.into()),
+        ))
+        .borders(Borders::ALL)
+        .border_style(search_border_style),
+    );
   f.render_widget(search_input, inner[0]);
   if app.view.create_playlist_focus == CreatePlaylistFocus::SearchInput {
     f.set_cursor_position((
-      inner[0].x + 1 + app.view.create_playlist_search_cursor,
+      inner[0].x + 1 + app.view.create_playlist_search_cursor - search_scroll,
       inner[0].y + 1,
     ));
   }
@@ -223,6 +247,33 @@ fn draw_add_tracks_stage(f: &mut Frame<'_>, app: &App, area: Rect) {
 mod tests {
   use super::*;
   use ratatui::{backend::TestBackend, Terminal};
+
+  #[test]
+  fn input_scroll_keeps_the_cursor_inside_the_box() {
+    assert_eq!(input_scroll(0, 10), 0);
+    assert_eq!(input_scroll(9, 10), 0);
+    assert_eq!(input_scroll(10, 10), 1);
+    assert_eq!(input_scroll(25, 10), 16);
+    assert_eq!(input_scroll(5, 0), 0);
+  }
+
+  #[test]
+  fn long_playlist_name_scrolls_so_the_cursor_stays_in_the_popup() {
+    let mut app = App::default();
+    let name = "x".repeat(150);
+    app.view.create_playlist_name = name.chars().collect();
+    app.view.create_playlist_name_cursor = 150;
+    let mut terminal = Terminal::new(TestBackend::new(60, 30)).unwrap();
+    terminal
+      .draw(|f| draw_create_playlist_form(f, &app))
+      .unwrap();
+    let popup_right = centered_rect(Rect::new(0, 0, 60, 30), 80, 80);
+    let cursor = terminal.get_cursor_position().unwrap();
+    assert!(
+      cursor.x < popup_right.x + popup_right.width - 1,
+      "{cursor:?}"
+    );
+  }
 
   #[test]
   fn traditional_chinese_create_form_keeps_the_playlist_name_literal() {
