@@ -299,7 +299,7 @@ impl App {
   }
 
   fn sort_saved_albums(&mut self) {
-    use crate::core::sort::sort_by_key_with_order;
+    use crate::core::sort::{sort_by_key_with_order, SortOrder};
 
     let sort_state = self.album_sort;
 
@@ -323,6 +323,10 @@ impl App {
         // order chronologically; an album without one sorts first.
         SortField::ReleaseDate => sort_by_key_with_order(&mut page.items, sort_state.order, |a| {
           a.album.release_date.clone()
+        }),
+        // Library order is newest saved first, whatever direction was recorded.
+        SortField::Default => sort_by_key_with_order(&mut page.items, SortOrder::Descending, |a| {
+          a.added_at.clone()
         }),
         _ => {}
       }
@@ -1246,6 +1250,29 @@ mod tests {
       .filter_map(|a| a.album.id.as_deref())
       .collect();
     assert_eq!(ids, ["new", "mid", "old", "undated"]);
+  }
+
+  #[test]
+  fn default_sort_restores_newest_saved_album_first_after_a_name_sort() {
+    let (tx, _rx) = channel();
+    let mut app = App::new(tx, UserConfig::new(), Some(SystemTime::now()));
+    let mut page = saved_album_page(0, &["b", "c", "a"], false);
+    let added = ["2024-03-01", "2024-05-01", "2023-01-01"];
+    for (item, at) in page.items.iter_mut().zip(added) {
+      item.added_at = at.to_string();
+      item.album.name = item.album.id.clone().unwrap();
+    }
+    app.library.saved_albums.upsert_page_by_offset(page);
+
+    app.apply_sort_field(SortContext::SavedAlbums, SortField::Name);
+    app.apply_sort_field(SortContext::SavedAlbums, SortField::Default);
+
+    let ids: Vec<&str> = app.library.saved_albums.pages[0]
+      .items
+      .iter()
+      .filter_map(|a| a.album.id.as_deref())
+      .collect();
+    assert_eq!(ids, ["c", "b", "a"]);
   }
 
   #[test]
