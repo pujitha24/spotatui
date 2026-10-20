@@ -1,6 +1,6 @@
 use crate::core::app::{ActiveBlock, App, ArtistBlock, SearchResultBlock};
 use crate::core::user_config::Theme;
-use crate::tui::theme::ThemeExt;
+use crate::tui::theme::{EmphasisExt, ThemeExt};
 use ratatui::{
   layout::Rect,
   style::{Modifier, Style},
@@ -103,7 +103,7 @@ pub fn draw_selectable_list<S>(
     .style(app.user_config.theme.base_style())
     .highlight_style(
       get_color(highlight_state, app.user_config.theme)
-        .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        .add_modifier(app.user_config.behavior.emphasis(Modifier::BOLD) | Modifier::REVERSED),
     )
     .highlight_symbol(
       Line::from(format!("{} ", app.user_config.behavior.list_highlight_icon))
@@ -210,6 +210,38 @@ pub fn get_track_progress_percentage(song_progress_ms: u128, track_duration: Dur
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn selected_row_modifier(emphasis: bool) -> ratatui::style::Modifier {
+    use ratatui::{backend::TestBackend, Terminal};
+    let mut app = App::default();
+    app.user_config.behavior.enable_text_emphasis = emphasis;
+    let items = ["first", "second"];
+    let scroll = Cell::new(0);
+    let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
+    terminal
+      .draw(|f| {
+        draw_selectable_list(
+          f,
+          &app,
+          f.area(),
+          "List",
+          &items,
+          (true, true),
+          Some(0),
+          &scroll,
+        )
+      })
+      .unwrap();
+    terminal.backend().buffer().cell((3, 1)).unwrap().modifier
+  }
+
+  #[test]
+  fn selected_list_row_is_bold_only_when_text_emphasis_is_on() {
+    let on = selected_row_modifier(true);
+    assert!(on.contains(Modifier::BOLD) && on.contains(Modifier::REVERSED));
+    let off = selected_row_modifier(false);
+    assert!(!off.contains(Modifier::BOLD) && off.contains(Modifier::REVERSED));
+  }
 
   #[test]
   fn truncation_keeps_complete_graphemes_within_the_cell_budget() {
